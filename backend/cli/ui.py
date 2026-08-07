@@ -113,8 +113,9 @@ def render_jobs(jobs: list, title: str = "Jobs") -> None:
 
 def status_pill(status: str) -> str:
     colors = {
+        "saved": "green",
         "applied": "cyan",
-        "interviewing": "yellow",
+        "interview": "yellow",
         "offer": "green",
         "rejected": "red",
     }

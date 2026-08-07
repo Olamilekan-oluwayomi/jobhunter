@@ -10,8 +10,11 @@ scheduler      Run the hourly scheduler in the foreground
 stats          Show aggregate statistics
 jobs           List / filter / search / sort jobs
 search         Search jobs by keyword
+save           Save a job to track it later
 saved          List saved jobs
 apply          Record an application for a job
+status         Update a job's workflow status
+match          Rank jobs against your profile (roles, skills, preferences)
 export csv     Export jobs to a CSV file
 export json    Export jobs to a JSON file
 clean          Remove orphaned rows (and optionally all job data)
@@ -46,8 +49,12 @@ from cli.ui import (
     success,
     warn,
 )
+from config import get_settings
 from database import SessionLocal
 from database import repository as repo
+from database.repository import WORKFLOW_STATUSES
+from matching.scorer import JobProfile
+from matching.service import RankingResult, rank_jobs
 from scrapers.manager import ScraperManager, ScraperResult, build_scrapers
 
 app = typer.Typer(
@@ -282,12 +289,23 @@ def jobs(
     location: Annotated[
         str | None, typer.Option("--location", "-l", help="Filter by location.")
     ] = None,
+    status: Annotated[
+        str | None,
+        typer.Option(
+            "--status",
+            help="Filter by workflow status: saved, applied, interview, rejected, offer.",
+        ),
+    ] = None,
     sort_by: Annotated[
         str, typer.Option("--sort-by", help="Sort field: posted_at, created_at, title, company.")
     ] = "posted_at",
     order: Annotated[str, typer.Option("--order", help="Sort order: asc or desc.")] = "desc",
 ):
     """Browse jobs with pagination, filtering, search and sorting."""
+    if status is not None and status not in WORKFLOW_STATUSES:
+        error("Invalid --status value. Use one of: " + ", ".join(WORKFLOW_STATUSES) + ".")
+        raise typer.Exit(1)
+
     db: Session = SessionLocal()
     try:
         rows, total = repo.list_jobs(
@@ -298,6 +316,7 @@ def jobs(
             source=source,
             company=company,
             location=location,
+            status=status,
             sort_by=sort_by,
             order=order,
         )
@@ -332,19 +351,145 @@ def search(
 
 
 @app.command()
-def saved():
-    """List all saved jobs."""
+def match(
+    min_score: Annotated[
+        int, typer.Option("--min-score", help="Only show jobs scoring at least this (0-100).")
+    ] = 0,
+    limit: Annotated[int, typer.Option("--limit", "-n", help="Maximum matches shown.")] = 10,
+):
+    """Rank jobs against your profile (roles, skills, preferences)."""
+    settings = get_settings()
+    profile = JobProfile(
+        roles=tuple(settings.profile_roles),
+        skills=tuple(settings.profile_skills),
+        preferences=tuple(settings.profile_preferences),
+    )
+
     db: Session = SessionLocal()
     try:
-        entries = repo.list_saved_jobs(db)
+        result = rank_jobs(db, profile, min_score=min_score, limit=limit)
+        _render_match_table(result, profile, min_score)
     finally:
         db.close()
 
-    if not entries:
+
+def _render_match_table(result: RankingResult, profile: JobProfile, min_score: int) -> None:
+    from rich.table import Table
+
+    box("Top Matches")
+    info(
+        "Profile: "
+        + "; ".join(
+            [
+                f"roles: {', '.join(profile.roles)}",
+                f"skills: {', '.join(profile.skills)}",
+                f"preferences: {', '.join(profile.preferences)}",
+            ]
+        )
+    )
+
+    if not result.items:
+        warn(f"No jobs scored at least {min_score}.")
+        return
+
+    table = Table(header_style="bold blue", border_style="blue")
+    table.add_column("Score", justify="right", style="green")
+    table.add_column("Title", style="cyan")
+    table.add_column("Company", style="white")
+    table.add_column("Matched skills", style="green", max_width=40)
+    table.add_column("Missing skills", style="dim", max_width=40)
+    for entry in result.items:
+        table.add_row(
+            str(entry.score.score),
+            (entry.job.title or "—")[:70],
+            (entry.job.company or "—")[:30],
+            ", ".join(entry.score.matched_skills) or "—",
+            ", ".join(entry.score.missing_skills[:6]) or "—",
+        )
+    console.print(table)
+    info(
+        f"Scored {result.total_scored} job(s); {result.total_matched} matched "
+        f">= {min_score}; showing top {len(result.items)}."
+    )
+
+
+@app.command()
+def save(job_id: Annotated[int, typer.Argument(help="ID of the job to save.")]):
+    """Save a job so you can track it later."""
+    db: Session = SessionLocal()
+    try:
+        job = repo.get_job(db, job_id)
+        if job is None:
+            error(f"Job {job_id} does not exist.")
+            raise typer.Exit(1)
+        entry = repo.create_saved_job(db, job_id)
+        title, company = job.title, job.company
+        score = job.match_score.score if job.match_score is not None else None
+        already_saved = entry is None
+    finally:
+        db.close()
+
+    if already_saved:
+        info(f"Job #{job_id} was already saved.")
+    else:
+        success(f"Saved job #{job_id}")
+    _render_job_confirmation(title, company, score)
+
+
+def _render_job_confirmation(title: str, company: str, score: int | None) -> None:
+    console.print(f"[bold]{title}[/]")
+    console.print(company)
+    if score is not None:
+        console.print(f"Match: [green]{score}[/]")
+
+
+@app.command()
+def saved():
+    """List saved jobs with their match score and current status."""
+    db: Session = SessionLocal()
+    try:
+        entries = repo.list_saved_jobs(db)
+        rows = [
+            {
+                "id": entry.job.id,
+                "score": entry.job.match_score.score if entry.job.match_score is not None else None,
+                "title": entry.job.title,
+                "company": entry.job.company,
+                "location": entry.job.location,
+                "status": entry.job.applications[0].status if entry.job.applications else "saved",
+            }
+            for entry in entries
+        ]
+    finally:
+        db.close()
+
+    if not rows:
         info("No saved jobs yet.")
         return
-    render_jobs([entry.job for entry in entries], title="Saved Jobs")
-    info(f"{len(entries)} saved job(s).")
+    _render_saved_table(rows)
+    info(f"{len(rows)} saved job(s).")
+
+
+def _render_saved_table(rows: list[dict]) -> None:
+    from rich.table import Table
+
+    table = Table(title="Saved Jobs", header_style="bold green", border_style="green")
+    table.add_column("ID", justify="right", style="dim")
+    table.add_column("Score", justify="right", style="green")
+    table.add_column("Title", style="bold")
+    table.add_column("Company")
+    table.add_column("Location", style="magenta")
+    table.add_column("Status")
+    for row in rows:
+        table.add_row(
+            str(row["id"]),
+            str(row["score"]) if row["score"] is not None else "—",
+            (row["title"] or "—")[:70],
+            (row["company"] or "—")[:30],
+            (row["location"] or "—")[:30],
+            status_pill(row["status"]),
+        )
+    console.print(table)
 
 
 @app.command()
@@ -355,23 +500,57 @@ def apply(
     ] = "applied",
     notes: Annotated[str | None, typer.Option("--notes", help="Optional notes.")] = None,
 ):
-    """Record an application for a job."""
+    """Record (or update) an application for a job."""
     db: Session = SessionLocal()
     try:
         job = repo.get_job(db, job_id)
         if job is None:
             error(f"Job {job_id} does not exist.")
             raise typer.Exit(1)
+        entry = repo.upsert_application(db, job_id, status, notes)
         title, company = job.title, job.company
-        entry = repo.create_application(db, job_id, status, notes)
-        applied_status = entry.status if entry else None
+        applied_status, applied_at = entry.status, entry.applied_at
     finally:
         db.close()
 
-    if entry is None:
-        error(f"An application for job {job_id} already exists.")
+    success("Application recorded")
+    console.print(f"[bold]{title}[/]")
+    console.print(company)
+    console.print(f"Status: {status_pill(applied_status)}")
+    console.print(f"Applied: {applied_at.strftime('%Y-%m-%d') if applied_at else '—'}")
+
+
+@app.command()
+def status(
+    job_id: Annotated[int, typer.Argument(help="ID of the job to update.")],
+    status: Annotated[
+        str,
+        typer.Argument(help="Workflow status: saved, applied, interview, rejected, offer."),
+    ],
+):
+    """Update a job's workflow status."""
+    if status not in WORKFLOW_STATUSES:
+        error("Invalid status. Use one of: " + ", ".join(WORKFLOW_STATUSES) + ".")
         raise typer.Exit(1)
-    success(f"Applied to “{title}” at {company} — {status_pill(applied_status)}.")
+
+    db: Session = SessionLocal()
+    try:
+        job = repo.get_job(db, job_id)
+        if job is None:
+            error(f"Job {job_id} does not exist.")
+            raise typer.Exit(1)
+        if status == "saved":
+            repo.create_saved_job(db, job_id)
+        else:
+            repo.upsert_application(db, job_id, status)
+        title, company = job.title, job.company
+    finally:
+        db.close()
+
+    success(f"Job #{job_id} status updated")
+    console.print(f"[bold]{title}[/]")
+    console.print(company)
+    console.print(f"Status: {status_pill(status)}")
 
 
 @export_app.command("csv")

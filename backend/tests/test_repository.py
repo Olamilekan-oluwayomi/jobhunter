@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from database.repository import save_jobs_bulk
+from database.repository import save_job_scores, save_jobs_bulk
 
 
 def _job(url: str, source: str = "Remotive") -> dict:
@@ -62,3 +62,31 @@ def test_rowcount_handled_when_none():
     db = MagicMock()
     db.execute.return_value.rowcount = None
     assert save_jobs_bulk(db, [_job("u1")]) == 0
+
+
+def _score_row(job_id: int = 1) -> dict:
+    return {
+        "job_id": job_id,
+        "score": 80,
+        "role_points": 30,
+        "skill_points": 35,
+        "preference_points": 15,
+        "matched_roles": '["Frontend Engineer"]',
+        "matched_skills": '["React"]',
+        "missing_skills": "[]",
+        "matched_preferences": '["Remote"]',
+    }
+
+
+def test_save_job_scores_empty_is_a_noop():
+    db = MagicMock()
+    save_job_scores(db, [])
+    db.execute.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_save_job_scores_commits_once():
+    db = MagicMock()
+    save_job_scores(db, [_score_row(1), _score_row(2)])
+    db.execute.assert_called_once()
+    db.commit.assert_called_once()

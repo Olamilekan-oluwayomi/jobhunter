@@ -67,3 +67,22 @@ def test_bool_env_parsing(monkeypatch):
     assert reload_settings().notifications_enabled is False
     monkeypatch.setenv("NOTIFICATIONS_ENABLED", "garbage")
     assert reload_settings().notifications_enabled is False
+
+
+def test_profile_defaults(monkeypatch):
+    for var in ("PROFILE_ROLES", "PROFILE_SKILLS", "PROFILE_PREFERENCES"):
+        monkeypatch.delenv(var, raising=False)
+    settings = reload_settings()
+    assert "Frontend Developer" in settings.profile_roles
+    assert "React" in settings.profile_skills
+    assert "Full-time" in settings.profile_preferences
+
+
+def test_profile_env_override(monkeypatch):
+    monkeypatch.setenv("PROFILE_ROLES", "Backend Engineer,Data Engineer")
+    monkeypatch.setenv("PROFILE_SKILLS", "Python,SQL")
+    monkeypatch.setenv("PROFILE_PREFERENCES", "Remote")
+    settings = reload_settings()
+    assert settings.profile_roles == ["Backend Engineer", "Data Engineer"]
+    assert settings.profile_skills == ["Python", "SQL"]
+    assert settings.profile_preferences == ["Remote"]
