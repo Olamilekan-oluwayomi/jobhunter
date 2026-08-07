@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+alembic
+psycopg2-binary
+python-dotenv
+requests
+typer>=0.12
+rich>=13.0
