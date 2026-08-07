@@ -26,7 +26,22 @@ RETRY_BACKOFF = 0.5
 
 
 class ScraperError(RuntimeError):
-    """Raised when a scraper fails to fetch or parse a source."""
+    """Raised when a scraper fails to fetch or parse a source.
+
+    Carries optional context so callers can report the failure reason
+    (HTTP status, timeout) without string-matching messages.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        timed_out: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.timed_out = timed_out
 
 
 class BaseScraper(ABC):
@@ -83,19 +98,53 @@ class BaseScraper(ABC):
     def fetch_jobs(self) -> list[dict]:
         """Fetch and normalize jobs from this source."""
 
+    def _begin_fetch(self) -> None:
+        """Reset per-run statistics before a fetch.
+
+        Every scraper should call this at the start of ``fetch_jobs()``.
+        ``raw_count`` is incremented by ``build_job`` for each item that
+        reaches normalization; ``status``/``status_message`` describe the
+        outcome so the orchestrator can report per-source health.
+        """
+        self.raw_count = 0
+        self.status = "OK"
+        self.status_message = ""
+
+    def get(self, url: str, *, params: dict | None = None, headers: dict | None = None):
+        """Perform a retrying, timing-out GET and return the Response.
+
+        Raises ``ScraperError`` (with ``status_code``/``timed_out``) only
+        for transport-level failures; HTTP status is the caller's to inspect.
+        """
+        try:
+            return self._session.get(url, params=params, timeout=self.timeout, headers=headers)
+        except requests.Timeout as exc:
+            raise ScraperError(f"GET {url} timed out", timed_out=True) from exc
+        except requests.RequestException as exc:
+            raise ScraperError(f"GET {url} request failed: {exc}") from exc
+
     def get_json(self, url: str, *, params: dict | None = None) -> Any:
         """GET a JSON resource with retry and timeout, raising ScraperError on failure."""
-        try:
-            response = self._session.get(url, params=params, timeout=self.timeout)
-        except requests.RequestException as exc:
-            raise ScraperError(f"request failed: {exc}") from exc
-
+        response = self.get(url, params=params)
         if response.status_code != 200:
-            raise ScraperError(f"GET {url} returned HTTP {response.status_code}")
+            raise ScraperError(
+                f"GET {url} returned HTTP {response.status_code}",
+                status_code=response.status_code,
+            )
         try:
             return response.json()
         except ValueError as exc:
             raise ScraperError(f"GET {url} returned invalid JSON") from exc
+
+    def get_text(self, url: str, *, params: dict | None = None) -> str:
+        """GET a text resource with retry and timeout, raising ScraperError on failure."""
+        response = self.get(url, params=params)
+        if response.status_code != 200:
+            raise ScraperError(
+                f"GET {url} returned HTTP {response.status_code}",
+                status_code=response.status_code,
+            )
+        return response.text
 
     @staticmethod
     def clean_html(value: str | None) -> str:
@@ -145,6 +194,7 @@ class BaseScraper(ABC):
         Returns None if the entry is missing required data, has an
         invalid URL, or has a title too short to be a real job posting.
         """
+        self.raw_count += 1
         title = str(fields.get("title") or "").strip()
         company = str(fields.get("company") or "").strip()
         url = str(fields.get("url") or "").strip()

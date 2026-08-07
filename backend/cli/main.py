@@ -20,7 +20,6 @@ clean          Remove orphaned rows (and optionally all job data)
 import csv
 import json
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Annotated
 
@@ -49,7 +48,7 @@ from cli.ui import (
 )
 from database import SessionLocal
 from database import repository as repo
-from scrapers.manager import ALL_SCRAPERS
+from scrapers.manager import ScraperManager, ScraperResult, build_scrapers
 
 app = typer.Typer(
     name="jobhunter",
@@ -95,34 +94,38 @@ def scrape(
     """Run every scraper concurrently, save new jobs, then print statistics."""
     box("Starting scrape")
 
-    selected = {s.strip() for s in sources.split(",")} if sources else None
-    scrapers = [cls() for cls in ALL_SCRAPERS if not selected or cls.source in selected]
-    if not scrapers:
+    scrapers, disabled = build_scrapers(sources)
+    if not scrapers and not disabled:
         error("No scrapers matched the requested sources.")
         raise typer.Exit(1)
 
-    fetched = _run_scrapers(scrapers)
+    manager = ScraperManager(scrapers=scrapers, disabled_sources=disabled)
+    fetched = _run_scrapers(manager)
+    results = manager.results
 
     db: Session = SessionLocal()
     try:
         saved = 0
+        new_by_source: dict[str, int] = {}
         for job in fetched:
             if repo.save_job(db, job):
                 saved += 1
+                new_by_source[job["source"]] = new_by_source.get(job["source"], 0) + 1
     finally:
         db.close()
 
     success(f"Scrape finished — {len(fetched)} job(s) fetched, {saved} new saved.")
+    _render_scrape_summary(results, new_by_source)
     stats()
 
 
-def _run_scrapers(scrapers) -> list[dict]:
+def _run_scrapers(manager: ScraperManager) -> list[dict]:
     """Run scrapers concurrently with a live per-source progress display.
 
-    A thread is spawned per scraper; each updates its own Rich task as it
-    finishes. Returns every normalized job dict for later persistence.
+    Each scraper runs in its own thread; a single failed or unavailable
+    source never blocks the others. Returns every normalized job dict for
+    later persistence; per-source details live in ``manager.results``.
     """
-    results: dict[str, list[dict]] = {}
     started = time.perf_counter()
 
     progress = Progress(
@@ -133,34 +136,68 @@ def _run_scrapers(scrapers) -> list[dict]:
         TimeElapsedColumn(),
         transient=False,
     )
-    tasks = {scraper.source: progress.add_task(scraper.source, total=1) for scraper in scrapers}
+    tasks = {
+        scraper.source: progress.add_task(scraper.source, total=1) for scraper in manager.scrapers
+    }
 
-    with progress, ThreadPoolExecutor(max_workers=len(scrapers)) as pool:
-        futures = {pool.submit(_fetch, sc): sc for sc in scrapers}
-        for future in as_completed(futures):
-            scraper = futures[future]
-            try:
-                results[scraper.source] = future.result()
-                progress.advance(tasks[scraper.source])
-            except Exception:
-                results[scraper.source] = []
-                progress.update(
-                    tasks[scraper.source],
-                    description=f"[red]{scraper.source} (failed)[/]",
-                    completed=1,
-                )
+    def on_source_done(result: ScraperResult | None) -> None:
+        if result is None:
+            return
+        task = tasks.get(result.source)
+        if task is None:
+            return
+        color = (
+            "green"
+            if result.status == "OK"
+            else ("yellow" if result.status in ("UNAVAILABLE", "DISABLED", "EMPTY") else "red")
+        )
+        progress.update(
+            task,
+            description=f"[{color}]{result.source} ({result.status})[/]",
+            completed=1,
+        )
+
+    with progress:
+        fetched = manager.fetch_all(on_source_done=on_source_done)
 
     elapsed = time.perf_counter() - started
-    all_jobs: list[dict] = []
-    for source, jobs in results.items():
-        all_jobs.extend(jobs)
-        info(f"{source}: {len(jobs)} job(s)")
     info(f"Scraped all sources in {elapsed:.1f}s")
-    return all_jobs
+    return fetched
 
 
-def _fetch(scraper) -> list[dict]:
-    return scraper.fetch_jobs()
+def _render_scrape_summary(
+    results: dict[str, ScraperResult], new_by_source: dict[str, int]
+) -> None:
+    """Print the per-source Raw | Parsed | New | Status summary table."""
+    from rich.table import Table
+
+    table = Table(title="Scrape summary", header_style="bold blue", border_style="blue")
+    table.add_column("Source", style="cyan")
+    table.add_column("Raw", justify="right", style="white")
+    table.add_column("Parsed", justify="right", style="green")
+    table.add_column("New", justify="right", style="green")
+    table.add_column("Status", style="white")
+
+    for source in sorted(results):
+        result = results[source]
+        color = (
+            "green"
+            if result.status == "OK"
+            else ("yellow" if result.status in ("UNAVAILABLE", "DISABLED", "EMPTY") else "red")
+        )
+        table.add_row(
+            source,
+            str(result.raw),
+            str(result.parsed),
+            str(new_by_source.get(source, 0)),
+            f"[{color}]{result.status}[/]",
+        )
+    console.print(table)
+
+    for source in sorted(results):
+        result = results[source]
+        if result.status != "OK" and result.message:
+            warn(f"{source}: {result.message}")
 
 
 @app.command()
@@ -456,9 +493,25 @@ def _render_automation_report(report) -> None:
         table.add_column("Fetched", justify="right", style="green")
         table.add_column("New", justify="right", style="green")
         table.add_column("Exists", justify="right", style="yellow")
+        table.add_column("Status", style="white")
         for source, stat in sorted(report.by_source.items()):
-            table.add_row(source, str(stat["fetched"]), str(stat["new"]), str(stat["exists"]))
+            status = stat.get("status", "OK")
+            color = (
+                "green"
+                if status == "OK"
+                else ("yellow" if status in ("UNAVAILABLE", "DISABLED", "EMPTY") else "red")
+            )
+            table.add_row(
+                source,
+                str(stat["fetched"]),
+                str(stat["new"]),
+                str(stat["exists"]),
+                f"[{color}]{status}[/]",
+            )
         console.print(table)
+
+    if report.failed_sources:
+        warn("Unavailable sources: " + ", ".join(report.failed_sources))
 
     notified = report.notified or {}
     if notified.get("channels_enabled"):

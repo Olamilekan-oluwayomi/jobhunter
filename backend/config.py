@@ -111,6 +111,16 @@ class Settings:
         default_factory=lambda: _int("RATE_LIMIT_WINDOW_SECONDS", 60)
     )
 
+    # --- scrapers ---
+    scraper_timeout: float = field(default_factory=lambda: _float("SCRAPER_TIMEOUT", 15.0))
+    scraper_max_retries: int = field(default_factory=lambda: _int("SCRAPER_MAX_RETRIES", 3))
+    reddit_enabled: bool = field(default_factory=lambda: _bool("REDDIT_ENABLED", True))
+    reddit_timeout: float = field(default_factory=lambda: _float("REDDIT_TIMEOUT", 10.0))
+    reddit_max_retries: int = field(default_factory=lambda: _int("REDDIT_MAX_RETRIES", 0))
+    upwork_enabled: bool = field(default_factory=lambda: _bool("UPWORK_ENABLED", True))
+    upwork_timeout: float = field(default_factory=lambda: _float("UPWORK_TIMEOUT", 15.0))
+    upwork_max_retries: int = field(default_factory=lambda: _int("UPWORK_MAX_RETRIES", 2))
+
     # --- scheduler ---
     schedule_enabled: bool = field(default_factory=lambda: _bool("SCHEDULE_ENABLED", True))
     schedule_interval_minutes: int = field(

@@ -33,6 +33,9 @@ class RunReport:
     already_exists: int
     by_source: dict[str, dict] = field(default_factory=dict)
     notified: dict = field(default_factory=dict)
+    succeeded_sources: int = 0
+    failed_sources: list[str] = field(default_factory=list)
+    by_source_failed: dict[str, str] = field(default_factory=dict)
 
 
 def run_automation(triggered_by: str = "scheduler") -> RunReport:
@@ -41,6 +44,7 @@ def run_automation(triggered_by: str = "scheduler") -> RunReport:
     started_at = datetime.now(timezone.utc)
     manager = ScraperManager()
     fetched = manager.fetch_all()
+    results = manager.results
 
     db = SessionLocal()
     try:
@@ -72,8 +76,19 @@ def run_automation(triggered_by: str = "scheduler") -> RunReport:
             already += exists
             new_jobs.extend(fresh[:inserted])
 
-        for scraper in manager.scrapers:
-            by_source.setdefault(scraper.source, {"fetched": 0, "new": 0, "exists": 0})
+        for source, result in results.items():
+            entry = by_source.setdefault(source, {"fetched": result.parsed, "new": 0, "exists": 0})
+            entry["status"] = result.status
+
+        failed_sources = [
+            source for source, result in results.items() if result.status not in ("OK", "DISABLED")
+        ]
+        by_source_failed = {
+            source: result.message or result.status
+            for source, result in results.items()
+            if result.status not in ("OK", "DISABLED")
+        }
+        succeeded_sources = sum(1 for result in results.values() if result.status == "OK")
 
         notify = notify_new_jobs(new_jobs)
         settings = get_settings()
@@ -94,6 +109,9 @@ def run_automation(triggered_by: str = "scheduler") -> RunReport:
             already_exists=already,
             by_source=by_source,
             notified=notified,
+            succeeded_sources=succeeded_sources,
+            failed_sources=failed_sources,
+            by_source_failed=by_source_failed,
         )
 
         _persist_run(db, triggered_by, report)
@@ -159,10 +177,10 @@ def _persist_run(db, triggered_by: str, report: RunReport) -> None:
             "total_fetched": report.total_fetched,
             "new_jobs": report.new_jobs,
             "already_exists": report.already_exists,
-            "succeeded": report.total_fetched - report.already_exists,
-            "failed": "[]",
+            "succeeded": report.succeeded_sources,
+            "failed": json.dumps(report.failed_sources),
             "by_source": json.dumps(report.by_source, default=str),
-            "by_source_failed": "{}",
+            "by_source_failed": json.dumps(report.by_source_failed, default=str),
             "notified": json.dumps(report.notified, default=str),
         },
     )
