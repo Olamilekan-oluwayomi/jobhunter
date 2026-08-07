@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jobhunter"
+version = "1.0.0"
+description = "JobHunter — aggregate, browse and track remote jobs."
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "sqlalchemy",
+    "alembic",
+    "psycopg2-binary",
+    "python-dotenv",
+    "requests",
+    "typer>=0.12",
+    "rich>=13.0",
+]
+
+[project.scripts]
+jobhunter = "cli.main:app"
+
+[tool.setuptools]
+packages = ["api", "api.routes", "api.schemas", "api.services", "api.dependencies", "cli", "config", "database", "notifications", "scheduler", "scrapers", "utils"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["."]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "FURB"]
+ignore = [
+    "B008",  # FastAPI idiom: Depends() in argument defaults
+    "RUF012", # mutable class attributes are fine here (header maps)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"alembic/env.py" = ["E402", "F401"]
+"tests/*" = ["BLE001"]
+"scrapers/*" = ["BLE001"]
+"cli/*" = ["BLE001"]
+"utils/retry.py" = ["PERF203"]
+
+[tool.ruff.format]
+line-ending = "auto"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
