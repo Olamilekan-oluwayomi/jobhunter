@@ -22,6 +22,9 @@ dependencies = [
 [project.scripts]
 jobhunter = "cli.main:app"
 
+[project.optional-dependencies]
+test = ["httpx2", "pytest", "ruff"]
+
 [tool.setuptools]
 packages = ["api", "api.routes", "api.schemas", "api.services", "api.dependencies", "cli", "database", "notifications", "scheduler", "scrapers", "utils"]
 py-modules = ["config"]
