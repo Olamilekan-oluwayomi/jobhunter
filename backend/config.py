@@ -139,6 +139,49 @@ class Settings:
 
     # --- job matching ---
     match_keywords: list[str] = field(default_factory=lambda: _list("MATCH_KEYWORDS"))
+    # Candidate profile used by `jobhunter match` to score jobs 0-100
+    # (role 30 + skills 50 + preferences 20). Defaults match a junior
+    # frontend engineer; override with the PROFILE_* environment variables.
+    profile_roles: list[str] = field(
+        default_factory=lambda: (
+            _list("PROFILE_ROLES")
+            or [
+                "Frontend Developer",
+                "Frontend Engineer",
+                "React Developer",
+                "Software Engineer",
+            ]
+        )
+    )
+    profile_skills: list[str] = field(
+        default_factory=lambda: (
+            _list("PROFILE_SKILLS")
+            or [
+                "React",
+                "Next.js",
+                "JavaScript",
+                "TypeScript",
+                "Tailwind CSS",
+                "HTML",
+                "CSS",
+                "Supabase",
+                "Git",
+                "REST APIs",
+            ]
+        )
+    )
+    profile_preferences: list[str] = field(
+        default_factory=lambda: (
+            _list("PROFILE_PREFERENCES")
+            or [
+                "Remote",
+                "Junior / Entry-level",
+                "Internship",
+                "Full-time",
+            ]
+        )
+    )
+
     match_sources: list[str] = field(default_factory=lambda: _list("MATCH_SOURCES"))
     match_require_all_keywords: bool = field(
         default_factory=lambda: _bool("MATCH_REQUIRE_ALL_KEYWORDS", False)

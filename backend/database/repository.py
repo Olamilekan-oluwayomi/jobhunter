@@ -1,10 +1,42 @@
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, joinedload
 
-from .models import Application, Job, SavedJob, ScrapeRun, Source
+from .models import Application, Job, JobScore, SavedJob, ScrapeRun, Source
 
 JOB_SEARCH_COLUMNS = (Job.title, Job.company, Job.location, Job.description)
+
+#: Workflow statuses a job can be in. "saved" lives in the saved_jobs table;
+#: the rest are application statuses.
+WORKFLOW_STATUSES = ("saved", "applied", "interview", "rejected", "offer")
+
+
+def save_job_scores(db: Session, rows: list[dict]) -> None:
+    """Upsert match-score rows for many jobs in a single transaction.
+
+    Uses PostgreSQL ``ON CONFLICT (job_id) DO UPDATE`` so re-scoring after a
+    profile change refreshes existing rows instead of duplicating them.
+    """
+    if not rows:
+        return
+
+    excluded = insert(JobScore).excluded
+    stmt = insert(JobScore).on_conflict_do_update(
+        index_elements=[JobScore.job_id],
+        set_={
+            "score": excluded.score,
+            "role_points": excluded.role_points,
+            "skill_points": excluded.skill_points,
+            "preference_points": excluded.preference_points,
+            "matched_roles": excluded.matched_roles,
+            "matched_skills": excluded.matched_skills,
+            "missing_skills": excluded.missing_skills,
+            "matched_preferences": excluded.matched_preferences,
+            "updated_at": func.now(),
+        },
+    )
+    db.execute(stmt, rows)
+    db.commit()
 
 
 def _ensure_source(db: Session, name: str) -> Source:
@@ -53,11 +85,33 @@ def save_jobs_bulk(db: Session, jobs: list[dict]) -> int:
     return max(result.rowcount or 0, 0)
 
 
+def _job_status_condition(status: str):
+    """SQL predicate for a workflow status filter.
+
+    ``saved`` means the job has a saved_jobs entry and no application yet;
+    the other statuses match the application record's status. The five
+    statuses are mutually exclusive, so a saved-then-applied job only shows
+    up under its application status.
+    """
+    if status == "saved":
+        return and_(
+            exists(select(SavedJob.id).where(SavedJob.job_id == Job.id)),
+            ~exists(select(Application.id).where(Application.job_id == Job.id)),
+        )
+    return exists(
+        select(Application.id).where(
+            Application.job_id == Job.id,
+            Application.status == status,
+        )
+    )
+
+
 def _job_filters(
     search: str | None,
     source: str | None,
     company: str | None,
     location: str | None,
+    status: str | None = None,
 ):
     conditions = []
     if search:
@@ -69,6 +123,8 @@ def _job_filters(
         conditions.append(Job.company.ilike(f"%{company}%"))
     if location:
         conditions.append(Job.location.ilike(f"%{location}%"))
+    if status:
+        conditions.append(_job_status_condition(status))
     return conditions
 
 
@@ -81,10 +137,11 @@ def list_jobs(
     source: str | None = None,
     company: str | None = None,
     location: str | None = None,
+    status: str | None = None,
     sort_by: str = "posted_at",
     order: str = "desc",
 ) -> tuple[list[Job], int]:
-    conditions = _job_filters(search, source, company, location)
+    conditions = _job_filters(search, source, company, location, status)
     where = and_(*conditions) if conditions else None
 
     count_stmt = select(func.count(Job.id))
@@ -125,8 +182,15 @@ def list_sources(db: Session) -> list[Source]:
 
 
 def list_saved_jobs(db: Session) -> list[SavedJob]:
-    stmt = select(SavedJob).options(joinedload(SavedJob.job)).order_by(SavedJob.saved_at.desc())
-    return list(db.scalars(stmt).all())
+    stmt = (
+        select(SavedJob)
+        .options(
+            joinedload(SavedJob.job).joinedload(Job.match_score),
+            joinedload(SavedJob.job).joinedload(Job.applications),
+        )
+        .order_by(SavedJob.saved_at.desc())
+    )
+    return list(db.scalars(stmt).unique().all())
 
 
 def get_saved_job(db: Session, saved_id: int) -> SavedJob | None:
@@ -194,6 +258,33 @@ def create_application(
 ) -> Application | None:
     if db.scalar(select(Application).where(Application.job_id == job_id)):
         return None
+    entry = Application(job_id=job_id, status=status, notes=notes)
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+
+def upsert_application(
+    db: Session,
+    job_id: int,
+    status: str,
+    notes: str | None = None,
+) -> Application:
+    """Create an application for a job, or update the existing one.
+
+    Idempotent: a job can have at most one application record. Re-applying
+    sets the status (and notes when provided) while preserving the original
+    ``applied_at`` so the first application date is never lost.
+    """
+    existing = db.scalar(select(Application).where(Application.job_id == job_id))
+    if existing is not None:
+        existing.status = status
+        if notes is not None:
+            existing.notes = notes
+        db.commit()
+        db.refresh(existing)
+        return existing
     entry = Application(job_id=job_id, status=status, notes=notes)
     db.add(entry)
     db.commit()

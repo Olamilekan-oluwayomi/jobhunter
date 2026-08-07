@@ -26,7 +26,7 @@ jobhunter = "cli.main:app"
 test = ["httpx2", "pytest", "ruff"]
 
 [tool.setuptools]
-packages = ["api", "api.routes", "api.schemas", "api.services", "api.dependencies", "cli", "database", "notifications", "scheduler", "scrapers", "utils"]
+packages = ["api", "api.routes", "api.schemas", "api.services", "api.dependencies", "cli", "database", "matching", "notifications", "scheduler", "scrapers", "utils"]
 py-modules = ["config"]
 
 [tool.ruff]

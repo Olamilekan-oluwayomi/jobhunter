@@ -6,7 +6,7 @@ from pydantic.config import ConfigDict
 
 from api.schemas.job import JobOut
 
-ApplicationStatus = Literal["applied", "interviewing", "offer", "rejected"]
+ApplicationStatus = Literal["applied", "interview", "offer", "rejected"]
 
 
 class ApplicationOut(BaseModel):

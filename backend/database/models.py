@@ -4,6 +4,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Integer,
     MetaData,
     Text,
     UniqueConstraint,
@@ -76,6 +77,11 @@ class Job(Base, TimestampMixin):
     posted_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
 
     source_ref: Mapped["Source"] = relationship(back_populates="jobs")
+    match_score: Mapped["JobScore | None"] = relationship(
+        back_populates="job",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
     applications: Mapped[list["Application"]] = relationship(
         back_populates="job",
         cascade="all, delete-orphan",
@@ -90,7 +96,7 @@ class Application(Base, TimestampMixin):
     __tablename__ = "applications"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('applied', 'interviewing', 'offer', 'rejected')",
+            "status IN ('applied', 'interview', 'offer', 'rejected')",
             name="valid_status",
         ),
         UniqueConstraint("job_id"),
@@ -122,6 +128,32 @@ class SavedJob(Base, TimestampMixin):
     saved_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
     job: Mapped["Job"] = relationship(back_populates="saved_entries")
+
+
+class JobScore(Base, TimestampMixin):
+    """A persisted deterministic match score for one job."""
+
+    __tablename__ = "job_scores"
+    __table_args__ = (
+        UniqueConstraint("job_id"),
+        CheckConstraint("score >= 0 AND score <= 100", name="score_range"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(
+        ForeignKey("jobs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    score: Mapped[int] = mapped_column(Integer, index=True, nullable=False)
+    role_points: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    skill_points: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    preference_points: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    matched_roles: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    matched_skills: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    missing_skills: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    matched_preferences: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+
+    job: Mapped["Job"] = relationship(back_populates="match_score")
 
 
 class ScrapeRun(Base, TimestampMixin):
