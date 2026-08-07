@@ -23,7 +23,8 @@ dependencies = [
 jobhunter = "cli.main:app"
 
 [tool.setuptools]
-packages = ["api", "api.routes", "api.schemas", "api.services", "api.dependencies", "cli", "config", "database", "notifications", "scheduler", "scrapers", "utils"]
+packages = ["api", "api.routes", "api.schemas", "api.services", "api.dependencies", "cli", "database", "notifications", "scheduler", "scrapers", "utils"]
+py-modules = ["config"]
 
 [tool.ruff]
 line-length = 100
