@@ -112,6 +112,8 @@ class Settings:
     )
 
     # --- scrapers ---
+    lever_boards: list[str] = field(default_factory=lambda: _list("LEVER_BOARDS"))
+    ashby_boards: list[str] = field(default_factory=lambda: _list("ASHBY_BOARDS"))
     scraper_timeout: float = field(default_factory=lambda: _float("SCRAPER_TIMEOUT", 15.0))
     scraper_max_retries: int = field(default_factory=lambda: _int("SCRAPER_MAX_RETRIES", 3))
     reddit_enabled: bool = field(default_factory=lambda: _bool("REDDIT_ENABLED", True))

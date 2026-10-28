@@ -7,6 +7,8 @@ const SOURCE_VARIANTS = {
   Arbeitnow: "warning",
   Reddit: "danger",
   Upwork: "muted",
+  Lever: "info",
+  Ashby: "accent",
 };
 
 export default function SourceBadge({ source, className = "" }) {

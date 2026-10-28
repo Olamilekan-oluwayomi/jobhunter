@@ -117,6 +117,29 @@ def test_manager_dedupes_by_url() -> None:
     assert {j["url"] for j in fetched} == {"https://dup.example/1", "https://dup.example/2"}
 
 
+def test_distinct_query_job_ids_survive_deduplication() -> None:
+    scraper = _StubScraper(
+        payload=[
+            _job("First role", "https://careers.example/jobs?gh_jid=1&utm_source=email"),
+            _job("Second role", "https://careers.example/jobs?gh_jid=2"),
+            _job("First role again", "https://careers.example/jobs?utm_source=web&gh_jid=1"),
+        ]
+    )
+    jobs = ScraperManager(scrapers=[scraper]).fetch_all()
+    assert len(jobs) == 2
+    assert {job["title"] for job in jobs} == {"First role", "Second role"}
+
+
+def test_hash_routed_jobs_are_not_collapsed() -> None:
+    scraper = _StubScraper(
+        payload=[
+            _job("First role", "https://careers.example/#/jobs/1"),
+            _job("Second role", "https://careers.example/#/jobs/2"),
+        ]
+    )
+    assert len(ScraperManager(scrapers=[scraper]).fetch_all()) == 2
+
+
 SAMPLE_RSS = """<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <entry>

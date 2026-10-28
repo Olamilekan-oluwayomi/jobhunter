@@ -9,11 +9,12 @@ CLI, scheduler and API to report.
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from config import get_settings
 from scrapers.arbeitnow import ArbeitnowScraper
 from scrapers.base import BaseScraper, ScraperError
+from scrapers.company_boards import AshbyScraper, LeverScraper
 from scrapers.jobicy import JobicyScraper
 from scrapers.reddit import RedditScraper
 from scrapers.remoteok import RemoteOKScraper
@@ -28,6 +29,8 @@ ALL_SCRAPERS = (
     ArbeitnowScraper,
     RedditScraper,
     UpworkScraper,
+    LeverScraper,
+    AshbyScraper,
 )
 
 
@@ -56,7 +59,16 @@ def _url_key(url: str) -> str:
     parts = urlsplit(url)
     host = (parts.netloc or "").lower()
     path = (parts.path or "").rstrip("/")
-    return f"{host}{path}"
+    # Job identifiers often live in the query (e.g. gh_jid or jobId).
+    # Remove only known advertising parameters, never arbitrary query data.
+    query = sorted(
+        (key, value)
+        for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        if not key.lower().startswith("utm_") and key.lower() not in {"gclid", "fbclid", "msclkid"}
+    )
+    suffix = f"?{urlencode(query)}" if query else ""
+    fragment = f"#{parts.fragment}" if parts.fragment else ""
+    return f"{host}{path}{suffix}{fragment}"
 
 
 def _scraper_config(source: str, settings) -> tuple[bool, float, int]:
@@ -65,6 +77,9 @@ def _scraper_config(source: str, settings) -> tuple[bool, float, int]:
         return settings.reddit_enabled, settings.reddit_timeout, settings.reddit_max_retries
     if source == "Upwork":
         return settings.upwork_enabled, settings.upwork_timeout, settings.upwork_max_retries
+    if source in {"Lever", "Ashby"}:
+        boards = settings.lever_boards if source == "Lever" else settings.ashby_boards
+        return bool(boards), settings.scraper_timeout, settings.scraper_max_retries
     return True, settings.scraper_timeout, settings.scraper_max_retries
 
 
