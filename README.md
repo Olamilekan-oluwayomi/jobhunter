@@ -103,6 +103,10 @@ npm run lint && npm run build
 
 ## Documentation
 
+- [Interactive design preview](docs/DESIGN-PREVIEW.md) — run the frontend and open `/preview`.
+- [Product roadmap](docs/PRODUCT-ROADMAP.md) — audit, implementation status and release criteria.
+- [Company-board sources](docs/COMPANY-SOURCES.md) — configure optional Lever and Ashby boards.
+
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — system overview, data flow
   and extension points.
 
