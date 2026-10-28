@@ -1,6 +1,6 @@
 import { Menu, RefreshCw } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
-import { useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 
 import { useToast } from "../components/ui/Toast";
 import Button from "../components/ui/Button";
@@ -50,6 +50,10 @@ export default function Topbar({ onMenuClick }) {
       </div>
 
       <div className="flex-1" />
+
+      <Link to="/preview" className="text-xs font-medium text-accent hover:underline">
+        Try the new design
+      </Link>
 
       <Button
         variant="secondary"

@@ -1,5 +1,10 @@
 import client from "./client";
 
+export const getApplications = async (params) => {
+  const { data } = await client.get("/applications", { params });
+  return data;
+};
+
 export const createApplication = async (payload) => {
   const { data } = await client.post("/applications", payload);
   return data;

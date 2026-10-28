@@ -11,8 +11,8 @@ import {
 const NAV_ITEMS = [
   { label: "Dashboard", to: "/", icon: LayoutDashboard },
   { label: "Jobs", to: "/jobs", icon: Briefcase },
-  { label: "Saved", to: "/saved", icon: FolderHeart, soon: true },
-  { label: "Applications", to: "/applications", icon: Send, soon: true },
+  { label: "Saved", to: "/saved", icon: FolderHeart },
+  { label: "Applications", to: "/applications", icon: Send },
 ];
 
 export default function Sidebar({ open, onClose }) {

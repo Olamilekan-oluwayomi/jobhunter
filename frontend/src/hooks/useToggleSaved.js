@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { saveJob, unsaveJob } from "../api/saved";
-import { savedKeys } from "../utils/queryKeys";
+import { savedKeys, statsKeys } from "../utils/queryKeys";
 
 export function useToggleSaved() {
   const queryClient = useQueryClient();
@@ -39,6 +39,7 @@ export function useToggleSaved() {
 
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: savedKeys.all });
+      queryClient.invalidateQueries({ queryKey: statsKeys.all });
     },
   });
 }
