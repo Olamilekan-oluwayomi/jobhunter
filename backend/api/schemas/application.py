@@ -26,6 +26,13 @@ class ApplicationCreate(BaseModel):
     notes: str | None = Field(None, max_length=2000)
 
 
+class ApplicationListOut(BaseModel):
+    items: list[ApplicationOut]
+    total: int
+    page: int
+    page_size: int
+
+
 class ApplicationUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

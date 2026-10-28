@@ -79,10 +79,10 @@ def save_jobs_bulk(db: Session, jobs: list[dict]) -> int:
     if not rows:
         return 0
 
-    stmt = insert(Job).on_conflict_do_nothing(index_elements=[Job.url])
-    result = db.execute(stmt, rows)
+    stmt = insert(Job).on_conflict_do_nothing(index_elements=[Job.url]).returning(Job.id)
+    inserted_ids = list(db.scalars(stmt, rows).all())
     db.commit()
-    return max(result.rowcount or 0, 0)
+    return len(inserted_ids)
 
 
 def _job_status_condition(status: str):
@@ -248,6 +248,22 @@ def get_application(db: Session, application_id: int) -> Application | None:
         .options(joinedload(Application.job))
         .where(Application.id == application_id)
     )
+
+
+def list_applications(
+    db: Session, *, page: int = 1, page_size: int = 20, status: str | None = None
+) -> tuple[list[Application], int]:
+    conditions = [Application.status == status] if status else []
+    total = db.scalar(select(func.count()).select_from(Application).where(*conditions)) or 0
+    statement = (
+        select(Application)
+        .options(joinedload(Application.job))
+        .where(*conditions)
+        .order_by(Application.applied_at.desc(), Application.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    return list(db.scalars(statement).all()), total
 
 
 def create_application(

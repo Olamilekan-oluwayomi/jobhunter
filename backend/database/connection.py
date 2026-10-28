@@ -37,5 +37,9 @@ if not DATABASE_URL:
         f"{required['DB_NAME']}"
     )
 
+# Select the driver installed by this project's dependency manifests explicitly.
+if DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg2://", 1)
+
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)

@@ -42,6 +42,7 @@ JobHunter API — job aggregation with search, filtering and sorting.
 - `DELETE /save-job/{id}` — unsave a job
 
 ## Applications
+- `GET /applications` — list applications with pagination and status filtering
 - `POST /applications` — create an application
 - `PATCH /applications/{id}` — update status/notes
 
