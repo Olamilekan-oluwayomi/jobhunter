@@ -9,10 +9,12 @@ WORKDIR /app
 # Install deps first for better layer caching.
 COPY requirements.txt pyproject.toml ./
 RUN pip install --upgrade pip \
-    && pip install -r requirements.txt \
-    && pip install -e .
+    && pip install -r requirements.txt
 
 COPY . .
+
+# Package installation needs the source directories declared in pyproject.toml.
+RUN pip install --no-deps .
 
 RUN useradd -m -u 1001 jobhunter \
     && chown -R jobhunter:jobhunter /app

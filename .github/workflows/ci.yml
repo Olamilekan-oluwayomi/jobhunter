@@ -94,5 +94,11 @@ jobs:
       - name: Build backend image
         run: docker build -t jobhunter-backend ./backend
 
+      - name: Verify installed backend CLI
+        run: >-
+          docker run --rm
+          -e DATABASE_URL=postgresql://test:test@localhost:5432/test
+          --entrypoint jobhunter jobhunter-backend --help
+
       - name: Build frontend image
         run: docker build -t jobhunter-frontend ./frontend
