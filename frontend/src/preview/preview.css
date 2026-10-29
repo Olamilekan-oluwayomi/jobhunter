@@ -1812,3 +1812,10 @@
     scroll-behavior: auto !important;
   }
 }
+
+.jh-auth { min-height: 100dvh; display: grid; place-items: center; padding: 24px; background: #f3f5ee; color: #23362c; }
+.jh-auth-card { width: min(100%, 440px); display: grid; gap: 18px; padding: 32px; border: 1px solid #d4decf; border-radius: 20px; background: white; }
+.jh-auth-card label { display: grid; gap: 8px; font-weight: 600; }
+.jh-auth-card input { width: 100%; padding: 12px; border: 1px solid #aab7a8; border-radius: 8px; background: white; color: #23362c; font: inherit; }
+.jh-auth-card [role="alert"] { color: #982c2c; }
+.jh-pagination { display: flex; justify-content: center; align-items: center; gap: 16px; margin: 24px 0; }

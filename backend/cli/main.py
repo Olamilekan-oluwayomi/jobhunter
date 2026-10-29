@@ -22,6 +22,7 @@ clean          Remove orphaned rows (and optionally all job data)
 
 import csv
 import json
+import os
 import time
 from pathlib import Path
 from typing import Annotated
@@ -62,12 +63,86 @@ app = typer.Typer(
     help="JobHunter — aggregate, browse and track remote jobs.",
     no_args_is_help=True,
     rich_markup_mode="rich",
+    pretty_exceptions_show_locals=False,
 )
 export_app = typer.Typer(
     help="Export jobs to a file (CSV or JSON).",
     no_args_is_help=True,
     rich_markup_mode="rich",
 )
+
+
+@app.command("account")
+def account(
+    email: str,
+    admin: bool = typer.Option(False, help="Grant administrator access."),
+    claim_legacy: bool = typer.Option(False, help="Explicitly transfer pre-account private data."),
+):
+    """Create/reset an account locally; passwords are prompted without echo."""
+    from sqlalchemy import delete, select, update
+    from sqlalchemy.exc import IntegrityError
+
+    from api.auth import Credentials, hash_password
+    from database.models import Application, LoginSession, SavedJob, User
+
+    password = typer.prompt(
+        "Password (at least 12 characters)", hide_input=True, confirmation_prompt=True
+    )
+    try:
+        credentials = Credentials(email=email, password=password)
+    except ValueError:
+        raise typer.BadParameter(
+            "Use a valid email and a password of 12 to 128 characters"
+        ) from None
+    if credentials.email == "legacy@jobhunter.invalid":
+        raise typer.BadParameter("The legacy account is reserved and cannot sign in")
+    with SessionLocal() as db:
+        user = db.scalar(select(User).where(User.email == credentials.email))
+        if user is None:
+            user = User(
+                email=credentials.email, password_hash=hash_password(password), is_admin=admin
+            )
+            db.add(user)
+            db.flush()
+        else:
+            user.password_hash = hash_password(password)
+            user.is_active = True
+            user.is_admin = admin
+            db.execute(delete(LoginSession).where(LoginSession.user_id == user.id))
+        if claim_legacy:
+            # Preserve the target's own rows; collisions must be resolved explicitly.
+            try:
+                for model in (SavedJob, Application):
+                    db.execute(update(model).where(model.user_id == 1).values(user_id=user.id))
+            except IntegrityError:
+                db.rollback()
+                raise typer.BadParameter(
+                    "Legacy transfer conflicts with existing records; resolve duplicates first."
+                ) from None
+        db.commit()
+        success(f"Account ready: {user.email} (user id {user.id})")
+
+
+@app.command("deliver-notifications")
+def deliver_notifications(retry_failed: bool = False):
+    """Retry due outbox deliveries without fetching or inserting any jobs."""
+    from sqlalchemy import update
+
+    from database.models import NotificationDelivery
+    from notifications.outbox import drain
+    from utils.time import utcnow
+
+    with SessionLocal() as db:
+        if retry_failed:
+            db.execute(
+                update(NotificationDelivery)
+                .where(NotificationDelivery.status == "failed")
+                .values(status="pending", attempts=0, next_attempt_at=utcnow())
+            )
+            db.commit()
+        console.print(drain(db))
+
+
 app.add_typer(export_app, name="export")
 
 
@@ -212,7 +287,7 @@ def stats():
     """Show aggregate statistics about the job database."""
     db: Session = SessionLocal()
     try:
-        counts = repo.get_stats(db)
+        counts = repo.get_stats(db, user_id=int(os.getenv("JOBHUNTER_USER_ID", "1")))
     finally:
         db.close()
     _render_stats(counts)
@@ -422,7 +497,7 @@ def save(job_id: Annotated[int, typer.Argument(help="ID of the job to save.")]):
         if job is None:
             error(f"Job {job_id} does not exist.")
             raise typer.Exit(1)
-        entry = repo.create_saved_job(db, job_id)
+        entry = repo.create_saved_job(db, job_id, user_id=int(os.getenv("JOBHUNTER_USER_ID", "1")))
         title, company = job.title, job.company
         score = job.match_score.score if job.match_score is not None else None
         already_saved = entry is None
@@ -448,7 +523,7 @@ def saved():
     """List saved jobs with their match score and current status."""
     db: Session = SessionLocal()
     try:
-        entries = repo.list_saved_jobs(db)
+        entries = repo.list_saved_jobs(db, user_id=int(os.getenv("JOBHUNTER_USER_ID", "1")))
         rows = [
             {
                 "id": entry.job.id,
@@ -507,7 +582,9 @@ def apply(
         if job is None:
             error(f"Job {job_id} does not exist.")
             raise typer.Exit(1)
-        entry = repo.upsert_application(db, job_id, status, notes)
+        entry = repo.upsert_application(
+            db, job_id, status, notes, user_id=int(os.getenv("JOBHUNTER_USER_ID", "1"))
+        )
         title, company = job.title, job.company
         applied_status, applied_at = entry.status, entry.applied_at
     finally:
@@ -540,9 +617,11 @@ def status(
             error(f"Job {job_id} does not exist.")
             raise typer.Exit(1)
         if status == "saved":
-            repo.create_saved_job(db, job_id)
+            repo.create_saved_job(db, job_id, user_id=int(os.getenv("JOBHUNTER_USER_ID", "1")))
         else:
-            repo.upsert_application(db, job_id, status)
+            repo.upsert_application(
+                db, job_id, status, user_id=int(os.getenv("JOBHUNTER_USER_ID", "1"))
+            )
         title, company = job.title, job.company
     finally:
         db.close()

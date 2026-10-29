@@ -13,6 +13,8 @@ import re
 from dataclasses import dataclass
 
 from config import Settings
+from matching.salary import parse_salary
+from matching.scorer import phrase_pattern
 
 _TEXT_FIELDS = ("title", "company", "location", "salary", "description")
 
@@ -35,28 +37,17 @@ def _mentions_remote(job: dict) -> bool:
 
 
 def _annual_salary_min(job: dict) -> float | None:
-    """Lowest numeric value in the salary string, annualised, or None."""
-    salary = job.get("salary") or ""
-    if not salary:
-        return None
-
-    hourly = bool(re.search(r"(?:/\s*(?:hr|hour)|\bper\s*hour\b|hourly)", salary, re.IGNORECASE))
-    numbers = [float(m) for m in re.findall(r"\d[\d,]*(?:\.\d+)?", salary.replace(",", ""))]
-    if not numbers:
-        return None
-
-    lowest = min(numbers)
-    if hourly:
-        return lowest * 40 * 52
-    return lowest
+    """Annualized USD lower bound, or None when it cannot be compared."""
+    salary = parse_salary(job.get("salary"))
+    return salary.annual_minimum if salary else None
 
 
 def job_matches(job: dict, settings: Settings) -> MatchDecision:
-    keywords = [k for k in (settings.match_keywords or []) if k]
+    keywords = [k.strip() for k in (settings.match_keywords or []) if k.strip()]
 
     if keywords:
         text = _job_text(job).lower()
-        found = [k for k in keywords if k.lower() in text]
+        found = [k for k in keywords if phrase_pattern(k).search(text)]
         if settings.match_require_all_keywords and len(found) != len(keywords):
             return MatchDecision(False, ("missing required keywords",))
         if not settings.match_require_all_keywords and not found:
@@ -70,7 +61,9 @@ def job_matches(job: dict, settings: Settings) -> MatchDecision:
 
     if settings.match_min_salary:
         lo = _annual_salary_min(job)
-        if lo is None or lo < settings.match_min_salary:
+        if lo is None:
+            return MatchDecision(False, ("salary unavailable or not comparable in USD",))
+        if lo < settings.match_min_salary:
             return MatchDecision(False, ("below minimum salary",))
 
     return MatchDecision(True)

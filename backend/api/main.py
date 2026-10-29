@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from api.auth import router as auth_router
 from api.errors import register_exception_handlers
 from api.middleware import (
     RateLimitMiddleware,
@@ -18,6 +19,7 @@ from api.routes import (
     sources_router,
     stats_router,
 )
+from api.routes.discovery import router as discovery_router
 from config import get_settings
 from scheduler.runner import Scheduler
 from utils.logger import configure_logging, get_logger
@@ -96,6 +98,8 @@ app.add_middleware(
 )
 
 for router in (
+    auth_router,
+    discovery_router,
     jobs_router,
     stats_router,
     sources_router,

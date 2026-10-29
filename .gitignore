@@ -1,5 +1,6 @@
 # Local env files (never commit real credentials)
 .env
+.local/
 *.env.local
 
 # Python

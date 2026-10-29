@@ -1,7 +1,7 @@
 import client from "./client";
 
 export const runScrape = async () => {
-  const { data } = await client.post("/scrape");
+  const { data } = await client.post("/scrape", null, { timeout: 300000 });
   return data;
 };
 

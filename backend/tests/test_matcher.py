@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from config import Settings
 from notifications.matcher import job_matches, matches_any
 
@@ -91,3 +93,31 @@ def test_job_matches_returns_decision():
     decision = job_matches(_job(), _settings())
     assert decision.matched is True
     assert decision.reasons == ()
+
+
+@pytest.mark.parametrize(
+    ("salary", "minimum", "expected"),
+    [
+        ("$100k-$150k", 100_000, True),
+        ("$100k-$150k", 110_000, False),
+        ("$5000 per month", 60_000, True),
+        ("$5000 per month", 60_001, False),
+        ("EUR 150000", 100_000, False),
+        ("150000", 100_000, False),
+    ],
+)
+def test_salary_threshold_uses_comparable_annual_lower_bound(salary, minimum, expected):
+    assert matches_any(_job(salary=salary), _settings(match_min_salary=minimum)) is expected
+
+
+@pytest.mark.parametrize("keyword", ["go", "React", "C++", "C#"])
+def test_keywords_do_not_match_substrings_or_different_languages(keyword):
+    job = _job(title="C developer", description="Django reactor", location="Lagos")
+    assert not matches_any(job, _settings(match_keywords=[keyword]))
+
+
+def test_notification_keywords_share_phrase_matching_with_scorer():
+    job = _job(description="C++ and next-js development")
+    assert matches_any(
+        job, _settings(match_keywords=["C++", "Next.js"], match_require_all_keywords=True)
+    )

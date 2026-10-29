@@ -1,5 +1,6 @@
 from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from .models import Application, Job, JobScore, SavedJob, ScrapeRun, Source
@@ -9,6 +10,7 @@ JOB_SEARCH_COLUMNS = (Job.title, Job.company, Job.location, Job.description)
 #: Workflow statuses a job can be in. "saved" lives in the saved_jobs table;
 #: the rest are application statuses.
 WORKFLOW_STATUSES = ("saved", "applied", "interview", "rejected", "offer")
+_UNSET = object()
 
 
 def save_job_scores(db: Session, rows: list[dict]) -> None:
@@ -83,6 +85,26 @@ def save_jobs_bulk(db: Session, jobs: list[dict]) -> int:
     inserted_ids = list(db.scalars(stmt, rows).all())
     db.commit()
     return len(inserted_ids)
+
+
+def insert_new_jobs(db: Session, jobs: list[dict]) -> list[dict]:
+    """Return exact inserted rows, without committing; caller enqueues atomically."""
+    if not jobs:
+        return []
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+    insert_rows = sqlite_insert if db.get_bind().dialect.name == "sqlite" else insert
+    unique = {job["url"]: job for job in jobs}
+    names = {job["source"] for job in unique.values()}
+    db.execute(
+        insert_rows(Source).on_conflict_do_nothing(index_elements=[Source.name]),
+        [{"name": name} for name in names],
+    )
+    statement = (
+        insert_rows(Job).on_conflict_do_nothing(index_elements=[Job.url]).returning(Job.id, Job.url)
+    )
+    inserted = db.execute(statement, list(unique.values())).all()
+    return [{**unique[url], "id": job_id} for job_id, url in inserted]
 
 
 def _job_status_condition(status: str):
@@ -181,9 +203,10 @@ def list_sources(db: Session) -> list[Source]:
     return db.execute(stmt).all()
 
 
-def list_saved_jobs(db: Session) -> list[SavedJob]:
+def list_saved_jobs(db: Session, user_id: int = 1) -> list[SavedJob]:
     stmt = (
         select(SavedJob)
+        .where(SavedJob.user_id == user_id)
         .options(
             joinedload(SavedJob.job).joinedload(Job.match_score),
             joinedload(SavedJob.job).joinedload(Job.applications),
@@ -193,22 +216,30 @@ def list_saved_jobs(db: Session) -> list[SavedJob]:
     return list(db.scalars(stmt).unique().all())
 
 
-def get_saved_job(db: Session, saved_id: int) -> SavedJob | None:
-    return db.get(SavedJob, saved_id)
+def get_saved_job(db: Session, saved_id: int, user_id: int = 1) -> SavedJob | None:
+    return db.scalar(select(SavedJob).where(SavedJob.id == saved_id, SavedJob.user_id == user_id))
 
 
-def create_saved_job(db: Session, job_id: int) -> SavedJob | None:
-    if db.scalar(select(SavedJob).where(SavedJob.job_id == job_id)):
+def create_saved_job(db: Session, job_id: int, user_id: int = 1) -> SavedJob | None:
+    if db.scalar(select(SavedJob).where(SavedJob.job_id == job_id, SavedJob.user_id == user_id)):
         return None
-    entry = SavedJob(job_id=job_id)
+    entry = SavedJob(job_id=job_id, user_id=user_id)
     db.add(entry)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if db.scalar(
+            select(SavedJob.id).where(SavedJob.job_id == job_id, SavedJob.user_id == user_id)
+        ):
+            return None
+        raise
     db.refresh(entry)
     return entry
 
 
-def delete_saved_job(db: Session, saved_id: int) -> bool:
-    entry = db.get(SavedJob, saved_id)
+def delete_saved_job(db: Session, saved_id: int, user_id: int = 1) -> bool:
+    entry = get_saved_job(db, saved_id, user_id)
     if entry is None:
         return False
     db.delete(entry)
@@ -242,18 +273,20 @@ def purge_all_data(db: Session) -> dict:
     return {"saved": saved, "applications": apps, "jobs": jobs}
 
 
-def get_application(db: Session, application_id: int) -> Application | None:
+def get_application(db: Session, application_id: int, user_id: int = 1) -> Application | None:
     return db.scalar(
         select(Application)
         .options(joinedload(Application.job))
-        .where(Application.id == application_id)
+        .where(Application.id == application_id, Application.user_id == user_id)
     )
 
 
 def list_applications(
-    db: Session, *, page: int = 1, page_size: int = 20, status: str | None = None
+    db: Session, *, page: int = 1, page_size: int = 20, status: str | None = None, user_id: int = 1
 ) -> tuple[list[Application], int]:
-    conditions = [Application.status == status] if status else []
+    conditions = [Application.user_id == user_id]
+    if status:
+        conditions.append(Application.status == status)
     total = db.scalar(select(func.count()).select_from(Application).where(*conditions)) or 0
     statement = (
         select(Application)
@@ -271,12 +304,25 @@ def create_application(
     job_id: int,
     status: str,
     notes: str | None,
+    user_id: int = 1,
 ) -> Application | None:
-    if db.scalar(select(Application).where(Application.job_id == job_id)):
+    if db.scalar(
+        select(Application).where(Application.job_id == job_id, Application.user_id == user_id)
+    ):
         return None
-    entry = Application(job_id=job_id, status=status, notes=notes)
+    entry = Application(job_id=job_id, status=status, notes=notes, user_id=user_id)
     db.add(entry)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        if db.scalar(
+            select(Application.id).where(
+                Application.job_id == job_id, Application.user_id == user_id
+            )
+        ):
+            return None
+        raise
     db.refresh(entry)
     return entry
 
@@ -286,6 +332,7 @@ def upsert_application(
     job_id: int,
     status: str,
     notes: str | None = None,
+    user_id: int = 1,
 ) -> Application:
     """Create an application for a job, or update the existing one.
 
@@ -293,7 +340,9 @@ def upsert_application(
     sets the status (and notes when provided) while preserving the original
     ``applied_at`` so the first application date is never lost.
     """
-    existing = db.scalar(select(Application).where(Application.job_id == job_id))
+    existing = db.scalar(
+        select(Application).where(Application.job_id == job_id, Application.user_id == user_id)
+    )
     if existing is not None:
         existing.status = status
         if notes is not None:
@@ -301,7 +350,7 @@ def upsert_application(
         db.commit()
         db.refresh(existing)
         return existing
-    entry = Application(job_id=job_id, status=status, notes=notes)
+    entry = Application(job_id=job_id, status=status, notes=notes, user_id=user_id)
     db.add(entry)
     db.commit()
     db.refresh(entry)
@@ -313,11 +362,11 @@ def update_application(
     application: Application,
     *,
     status: str | None = None,
-    notes: str | None = None,
+    notes: str | object | None = _UNSET,
 ) -> Application:
     if status is not None:
         application.status = status
-    if notes is not None:
+    if notes is not _UNSET:
         application.notes = notes
     db.commit()
     db.refresh(application)
@@ -337,17 +386,21 @@ def latest_scrape_runs(db: Session, limit: int = 10) -> list[ScrapeRun]:
     return list(db.scalars(stmt).all())
 
 
-def get_stats(db: Session) -> dict:
+def get_stats(db: Session, user_id: int = 1) -> dict:
     total_jobs = db.scalar(select(func.count(Job.id)))
     sources = db.scalar(select(func.count(func.distinct(Job.source))))
     by_source = dict(db.execute(select(Job.source, func.count(Job.id)).group_by(Job.source)).all())
     by_status = dict(
         db.execute(
-            select(Application.status, func.count(Application.id)).group_by(Application.status)
+            select(Application.status, func.count(Application.id))
+            .where(Application.user_id == user_id)
+            .group_by(Application.status)
         ).all()
     )
-    total_saved = db.scalar(select(func.count(SavedJob.id)))
-    total_applications = db.scalar(select(func.count(Application.id)))
+    total_saved = db.scalar(select(func.count(SavedJob.id)).where(SavedJob.user_id == user_id))
+    total_applications = db.scalar(
+        select(func.count(Application.id)).where(Application.user_id == user_id)
+    )
     return {
         "total_jobs": total_jobs,
         "sources": sources,

@@ -84,7 +84,16 @@ def upgrade() -> None:
     )
 
     # Rename the auto-named url unique constraint for consistency.
-    op.execute("ALTER TABLE jobs RENAME CONSTRAINT jobs_url_key TO uq_jobs_url")
+    # Fresh installs already receive the metadata naming convention in 0001;
+    # older hand-created databases still have PostgreSQL's generated name.
+    op.execute("""
+        DO $$ BEGIN
+          IF EXISTS (SELECT 1 FROM pg_constraint
+                     WHERE conrelid = 'jobs'::regclass AND conname = 'jobs_url_key') THEN
+            ALTER TABLE jobs RENAME CONSTRAINT jobs_url_key TO uq_jobs_url;
+          END IF;
+        END $$
+    """)
 
     # Constraints.
     op.create_check_constraint("title_not_empty", "jobs", "length(title) > 0")

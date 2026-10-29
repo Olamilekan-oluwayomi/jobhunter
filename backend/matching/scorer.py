@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 
 ROLE_WEIGHT = 30
 SKILL_WEIGHT = 50
@@ -53,12 +54,15 @@ def _clean(value: str | None) -> str:
     return (value or "").lower()
 
 
-def _phrase_pattern(phrase: str) -> re.Pattern:
-    """Word-boundary regex that tolerates whitespace, "-" or "." between tokens."""
-    tokens = re.findall(r"[a-z0-9]+", phrase.lower())
+@lru_cache(maxsize=512)
+def phrase_pattern(phrase: str) -> re.Pattern:
+    """Preserve language punctuation while tolerating phrase separators."""
+    tokens = re.findall(r"[a-z0-9]+(?:\+\+|#)?", phrase.lower())
     if not tokens:
         return re.compile(r"(?!)")
-    return re.compile(r"\b" + r"[\s\-.]+".join(re.escape(t) for t in tokens) + r"\b")
+    return re.compile(
+        r"(?<![\w+#])" + r"[\s\-.]+".join(re.escape(t) for t in tokens) + r"(?![\w+#])"
+    )
 
 
 def _job_text(job: dict) -> str:
@@ -70,10 +74,10 @@ def score_job(job: dict, profile: JobProfile) -> JobScore:
     title = _clean(job.get("title"))
     text = _job_text(job)
 
-    roles = [(role, _phrase_pattern(role)) for role in profile.roles if role.strip()]
-    skills = [(skill, _phrase_pattern(skill)) for skill in profile.skills if skill.strip()]
+    roles = [(role, phrase_pattern(role)) for role in profile.roles if role.strip()]
+    skills = [(skill, phrase_pattern(skill)) for skill in profile.skills if skill.strip()]
     preferences = [
-        (pref, [_phrase_pattern(t) for t in pref.split("/") if t.strip()])
+        (pref, [phrase_pattern(t) for t in pref.split("/") if t.strip()])
         for pref in profile.preferences
         if pref.strip()
     ]

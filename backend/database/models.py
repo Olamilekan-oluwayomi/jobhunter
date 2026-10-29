@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -11,6 +12,8 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+from utils.time import utcnow
 
 NAMING_CONVENTION = {
     "ix": "ix_%(column_0_label)s",
@@ -99,10 +102,13 @@ class Application(Base, TimestampMixin):
             "status IN ('applied', 'interview', 'offer', 'rejected')",
             name="valid_status",
         ),
-        UniqueConstraint("job_id"),
+        UniqueConstraint("user_id", "job_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), default=1, nullable=False, index=True
+    )
     job_id: Mapped[int] = mapped_column(
         ForeignKey("jobs.id", ondelete="CASCADE"),
         nullable=False,
@@ -118,9 +124,12 @@ class Application(Base, TimestampMixin):
 
 class SavedJob(Base, TimestampMixin):
     __tablename__ = "saved_jobs"
-    __table_args__ = (UniqueConstraint("job_id"),)
+    __table_args__ = (UniqueConstraint("user_id", "job_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), default=1, nullable=False, index=True
+    )
     job_id: Mapped[int] = mapped_column(
         ForeignKey("jobs.id", ondelete="CASCADE"),
         nullable=False,
@@ -178,3 +187,55 @@ class ScrapeRun(Base, TimestampMixin):
     notified: Mapped[str] = mapped_column(
         Text, default="{}", nullable=False
     )  # JSON: matched?, notify summary
+
+
+class User(Base, TimestampMixin):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    password_hash: Mapped[str | None] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    profile: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    profile_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+
+class LoginSession(Base):
+    __tablename__ = "login_sessions"
+
+    token_hash: Mapped[str] = mapped_column(Text, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+
+class CandidateScore(Base, TimestampMixin):
+    """Versioned account-specific discovery scores; CLI scores remain isolated."""
+
+    __tablename__ = "candidate_scores"
+    __table_args__ = (UniqueConstraint("user_id", "job_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), index=True)
+    profile_version: Mapped[int] = mapped_column(Integer)
+    job_updated_at: Mapped[datetime] = mapped_column(DateTime)
+    score: Mapped[int] = mapped_column(Integer, index=True)
+    details: Mapped[str] = mapped_column(Text)
+    eligibility: Mapped[str] = mapped_column(Text)
+    employment_type: Mapped[str] = mapped_column(Text)
+
+
+class NotificationDelivery(Base, TimestampMixin):
+    __tablename__ = "notification_deliveries"
+    __table_args__ = (UniqueConstraint("job_id", "channel"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), index=True)
+    channel: Mapped[str] = mapped_column(Text)
+    payload: Mapped[str] = mapped_column(Text)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(Text, default="pending", index=True)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime)
+    last_error: Mapped[str | None] = mapped_column(Text)

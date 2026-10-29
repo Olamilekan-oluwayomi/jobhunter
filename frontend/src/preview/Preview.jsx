@@ -57,6 +57,12 @@ function initialState(live = false) {
     dark: false,
   };
   try {
+    if (live)
+      return {
+        ...fallback,
+        dark:
+          JSON.parse(localStorage.getItem("jobhunter-theme-v1"))?.dark === true,
+      };
     const value = JSON.parse(
       localStorage.getItem(live ? "jobhunter-preferences-v1" : STORAGE_KEY),
     );
@@ -198,7 +204,8 @@ function Detail({
       <div className="jh-detail-inner">
         <header className="jh-detail-top">
           <span>
-            ROLE DETAILS <span className="jh-demo-small">SAMPLE</span>
+            ROLE DETAILS{" "}
+            {!job.live && <span className="jh-demo-small">SAMPLE</span>}
           </span>
           <button
             ref={closeButton}
@@ -244,13 +251,21 @@ function Detail({
                 ? "The experience level matches your preference."
                 : "Check the experience requirements."}
             </p>
-            <small>Illustrative keyword score, not a hiring probability.</small>
+            <small>
+              {job.live
+                ? "Profile keyword score; this is not a hiring probability."
+                : "Illustrative keyword score, not a hiring probability."}
+            </small>
           </section>
           <section className={`jh-location-note ${location.tone}`}>
             <Globe2 size={19} />
             <div>
               <strong>{location.label}</strong>
-            <p>{job.live ? location.detail.replace("sample ", "") : location.detail}</p>
+              <p>
+                {job.live
+                  ? location.detail.replace("sample ", "")
+                  : location.detail}
+              </p>
             </div>
           </section>
           <h3>About the role</h3>
@@ -315,7 +330,7 @@ function Detail({
   );
 }
 
-function Profile({ profile, onSave }) {
+function Profile({ profile, onSave, live = false }) {
   const [draft, setDraft] = useState(profile);
   const change = (key, value) =>
     setDraft((previous) => ({ ...previous, [key]: value }));
@@ -348,9 +363,11 @@ function Profile({ profile, onSave }) {
           <label>
             Where are you based?
             <select
+              required
               value={draft.location}
               onChange={(event) => change("location", event.target.value)}
             >
+              <option value="">Choose your location</option>
               <option>Nigeria</option>
               <option>United States</option>
               <option>United Kingdom</option>
@@ -363,6 +380,7 @@ function Profile({ profile, onSave }) {
               value={draft.role}
               onChange={(event) => change("role", event.target.value)}
             >
+              <option value="">Choose a target role</option>
               <option>Frontend Engineer</option>
               <option>Product Engineer</option>
               <option>React Developer</option>
@@ -375,6 +393,7 @@ function Profile({ profile, onSave }) {
               value={draft.level}
               onChange={(event) => change("level", event.target.value)}
             >
+              <option>Not specified</option>
               <option>Junior</option>
               <option>Mid-level</option>
               <option>Senior</option>
@@ -412,7 +431,11 @@ function Profile({ profile, onSave }) {
         </div>
       </section>
       <div className="jh-profile-footer">
-        <p>Preferences stay in this browser.</p>
+        <p>
+          {live
+            ? "Preferences are saved to your account."
+            : "Preferences stay in this browser."}
+        </p>
         <button className="jh-button primary" type="submit">
           Save preferences <ArrowRight size={17} />
         </button>
@@ -433,6 +456,7 @@ export default function Preview({ workspace }) {
   const state = workspace
     ? {
         ...localState,
+        profile: workspace.profile,
         saved: workspace.saved,
         applications: workspace.applications,
       }
@@ -450,8 +474,8 @@ export default function Preview({ workspace }) {
   useEffect(() => {
     try {
       localStorage.setItem(
-        workspace ? "jobhunter-preferences-v1" : STORAGE_KEY,
-        JSON.stringify(localState),
+        workspace ? "jobhunter-theme-v1" : STORAGE_KEY,
+        JSON.stringify(workspace ? { dark: localState.dark } : localState),
       );
     } catch {
       setStorageWarning(true);
@@ -473,6 +497,7 @@ export default function Preview({ workspace }) {
     setParams(
       (previous) => {
         const next = new URLSearchParams(previous);
+        if (key !== "page") next.delete("page");
         if (value) next.set(key, value);
         else next.delete(key);
         return next;
@@ -480,6 +505,7 @@ export default function Preview({ workspace }) {
       { replace: true },
     );
   const navigate = (key) => {
+    selection.current += 1;
     setParams({ view: key });
     setSelected(null);
     window.scrollTo({ top: 0 });
@@ -528,28 +554,43 @@ export default function Preview({ workspace }) {
       ),
     }));
   };
-  const filtered = jobs
-    .filter(
-      (job) =>
-        (page !== "saved" || state.saved.includes(job.id)) &&
-        (!query ||
-          `${job.title} ${job.company} ${job.skills.join(" ")}`
-            .toLowerCase()
-            .includes(query.toLowerCase())) &&
-        (type === "all" || job.type === type) &&
-        (locationFilter === "all" ||
-          eligibility(job, state.profile).tone === "positive"),
-    )
-    .sort((a, b) =>
-      sort === "newest"
-        ? a.days - b.days
-        : fit(b, state.profile).score - fit(a, state.profile).score,
-    );
+  const filtered = workspace
+    ? jobs.filter((job) => workspace.resultIds.includes(job.id))
+    : jobs
+        .filter(
+          (job) =>
+            (page !== "saved" || state.saved.includes(job.id)) &&
+            (!query ||
+              `${job.title} ${job.company} ${job.skills.join(" ")}`
+                .toLowerCase()
+                .includes(query.toLowerCase())) &&
+            (type === "all" || job.type === type) &&
+            (locationFilter === "all" ||
+              eligibility(job, state.profile).tone === "positive"),
+        )
+        .sort((a, b) =>
+          sort === "newest"
+            ? a.days - b.days
+            : fit(b, state.profile).score - fit(a, state.profile).score,
+        );
   const currentTitle = navigation.find((item) => item.key === page).label;
   const activeApplications = state.applications.filter(
     (item) => item.stage !== "Closed",
   );
   const firstName = state.profile.name.trim() || "there";
+  const selection = useRef(0);
+  const openSelected = async (job) => {
+    const version = ++selection.current;
+    setSelected(job);
+    if (!workspace) return;
+    try {
+      const detail = await workspace.openJob(job.id);
+      if (version === selection.current) setSelected(detail);
+    } catch {
+      if (version === selection.current)
+        setNotice("Could not load role details. Try opening the role again.");
+    }
+  };
 
   return (
     <div className={`jh-preview ${state.dark ? "jh-dark" : ""}`}>
@@ -613,6 +654,14 @@ export default function Preview({ workspace }) {
             <strong>{currentTitle}</strong>
           </div>
           <div className="jh-topbar-actions">
+            {workspace && (
+              <button
+                className="jh-button secondary"
+                onClick={workspace.signOut}
+              >
+                Sign out
+              </button>
+            )}
             <span className="jh-preview-badge">
               <span />
               {workspace ? "Live jobs" : "Design preview"}
@@ -631,7 +680,7 @@ export default function Preview({ workspace }) {
                 Live app <ArrowUpRight size={14} />
               </Link>
             )}
-            {workspace && (
+            {workspace?.canScrape && (
               <button
                 className="jh-button secondary"
                 disabled={workspace.scraping}
@@ -780,7 +829,12 @@ export default function Preview({ workspace }) {
                   </button>
                   <button onClick={() => navigate("applications")}>
                     <b>
-                      {activeApplications.length.toString().padStart(2, "0")}
+                      {(workspace
+                        ? workspace.activeCount
+                        : activeApplications.length
+                      )
+                        .toString()
+                        .padStart(2, "0")}
                     </b>
                     <span>
                       In progress <ArrowUpRight size={13} />
@@ -797,12 +851,15 @@ export default function Preview({ workspace }) {
 
           {page === "profile" ? (
             <Profile
+              live={live}
               profile={state.profile}
               onSave={(profile) => {
+                if (workspace) {
+                  workspace.saveProfile(profile);
+                  return;
+                }
                 setState((previous) => ({ ...previous, profile }));
-                setNotice(
-                  "Preferences saved. Your matches have been updated.",
-                );
+                setNotice("Preferences saved. Your matches have been updated.");
               }}
             />
           ) : page === "applications" ? (
@@ -810,7 +867,12 @@ export default function Preview({ workspace }) {
               <div className="jh-section-bar">
                 <div>
                   <h2>
-                    Application tracker <span>{state.applications.length}</span>
+                    Application tracker{" "}
+                    <span>
+                      {workspace
+                        ? workspace.applicationCount
+                        : state.applications.length}
+                    </span>
                   </h2>
                   <p>Update a status as your conversation moves forward.</p>
                 </div>
@@ -862,7 +924,7 @@ export default function Preview({ workspace }) {
                             </div>
                             <button
                               className="jh-job-title"
-                              onClick={() => setSelected(job)}
+                              onClick={() => openSelected(job)}
                             >
                               {job.title}
                             </button>
@@ -876,7 +938,8 @@ export default function Preview({ workspace }) {
                                   updateApplication(item.jobId, {
                                     stage: event.target.value,
                                   });
-                                  setNotice(`Moved to ${event.target.value}`);
+                                  if (!workspace)
+                                    setNotice(`Moved to ${event.target.value}`);
                                 }}
                               >
                                 {stages.map((value) => (
@@ -936,7 +999,7 @@ export default function Preview({ workspace }) {
                       : page === "saved"
                         ? "Saved opportunities"
                         : "Explore opportunities"}
-                    <span>{filtered.length}</span>
+                    <span>{workspace ? workspace.total : filtered.length}</span>
                   </h2>
                   <p>
                     {page === "discover"
@@ -1042,7 +1105,7 @@ export default function Preview({ workspace }) {
                       profile={state.profile}
                       saved={state.saved.includes(job.id)}
                       onSave={toggleSave}
-                      onOpen={setSelected}
+                      onOpen={openSelected}
                     />
                   ))}
                 </div>
@@ -1079,6 +1142,31 @@ export default function Preview({ workspace }) {
                 <span />
               </div>
             </>
+          )}
+          {workspace && page !== "profile" && (
+            <nav className="jh-pagination" aria-label="Results pages">
+              <button
+                className="jh-button secondary"
+                disabled={workspace.page <= 1 || workspace.loading}
+                onClick={() => updateParam("page", String(workspace.page - 1))}
+              >
+                Previous
+              </button>
+              <span>
+                Page {workspace.page} of{" "}
+                {Math.max(1, Math.ceil(workspace.total / workspace.pageSize))}
+              </span>
+              <button
+                className="jh-button secondary"
+                disabled={
+                  workspace.page * workspace.pageSize >= workspace.total ||
+                  workspace.loading
+                }
+                onClick={() => updateParam("page", String(workspace.page + 1))}
+              >
+                Next
+              </button>
+            </nav>
           )}
         </main>
         <footer className="jh-footer">
@@ -1131,7 +1219,10 @@ export default function Preview({ workspace }) {
           application={state.applications.find(
             (item) => item.jobId === selected.id,
           )}
-          onClose={() => setSelected(null)}
+          onClose={() => {
+            selection.current += 1;
+            setSelected(null);
+          }}
           onSave={toggleSave}
           onApply={recordApplication}
         />

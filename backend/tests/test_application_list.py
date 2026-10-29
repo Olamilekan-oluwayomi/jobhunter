@@ -48,7 +48,12 @@ def test_application_list_http_contract(client):
         response = client.get("/applications?page=2&page_size=10&status=interview")
         assert response.status_code == 200
         assert response.json() == {"items": [], "total": 0, "page": 2, "page_size": 10}
-        assert listing.call_args.kwargs == {"page": 2, "page_size": 10, "status": "interview"}
+        assert listing.call_args.kwargs == {
+            "page": 2,
+            "page_size": 10,
+            "status": "interview",
+            "user_id": 1,
+        }
 
 
 @pytest.mark.parametrize("query", ["page=0", "page_size=101", "page_size=0", "status=unknown"])

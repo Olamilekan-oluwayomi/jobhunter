@@ -155,6 +155,12 @@ export const skillOptions = [
 export const stages = ["Applied", "Interview", "Offer", "Closed"];
 
 export function fit(job, profile) {
+  if (job.live)
+    return {
+      score: job.match?.score ?? 0,
+      skills: job.match?.matched_skills ?? [],
+      level: false,
+    };
   const skills = job.skills.filter((skill) => profile.skills.includes(skill));
   const role = job.title.toLowerCase().includes(profile.role.toLowerCase());
   const level = job.level === profile.level;
@@ -169,6 +175,22 @@ export function fit(job, profile) {
 }
 
 export function eligibility(job, profile) {
+  if (job.live) {
+    const status = job.eligibility?.status || "unknown";
+    return {
+      label: {
+        eligible: "Location matches",
+        restricted: "Location restricted",
+        unknown: "Check location",
+      }[status],
+      tone: { eligible: "positive", restricted: "warning", unknown: "neutral" }[
+        status
+      ],
+      detail:
+        job.eligibility?.detail ||
+        "Confirm country and work authorization requirements with the employer.",
+    };
+  }
   if (job.region === "worldwide")
     return {
       label: "Worldwide",

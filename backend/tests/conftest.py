@@ -66,6 +66,12 @@ def client(stub_db: StubSession) -> TestClient:
         yield stub_db
 
     app.dependency_overrides[real_get_db] = override_get_db
+    from api.auth import current_user
+    from database.models import User
+
+    # Legacy HTTP contract tests exercise wiring. Security integration tests use
+    # a real in-memory database and do not replace the authentication dependency.
+    app.dependency_overrides[current_user] = lambda: User(id=1, is_admin=False)
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides = {}

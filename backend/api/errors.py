@@ -36,10 +36,12 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def validation_exception_handler(
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
-        logger.warning("validation error on %s: %s", request.url.path, exc.errors())
+        # Validation input can contain passwords; never log or echo raw inputs.
+        errors = [{key: error[key] for key in ("loc", "msg", "type")} for error in exc.errors()]
+        logger.warning("validation error on %s: %s", request.url.path, errors)
         return JSONResponse(
             status_code=422,
-            content={"detail": exc.errors()},
+            content={"detail": errors},
         )
 
     @app.exception_handler(Exception)

@@ -1,5 +1,21 @@
 # Jobhunter product roadmap
 
+## Account and discovery implementation, 2026-10-30
+
+Implemented account sessions, ownership of saved jobs/applications, per-account
+score caches, server-paginated discovery and applications, backend-provided live
+scores, deferred detail fetching, queued application edits, scrape overlap
+protection and a transactional notification outbox. Legacy records stay with a
+disabled owner until an operator explicitly transfers them. See the
+[upgrade guide](ACCOUNT-DISCOVERY-UPGRADE.md) for setup and operational limits.
+
+These are local code changes. Existing databases must be migrated before running
+the updated app. PostgreSQL migration and locking tests use disposable schemas;
+they do not migrate existing application tables. No live notification was sent.
+
+The historical audit and milestone notes below describe earlier states; the new
+account and discovery implementation supersedes their open items in this scope.
+
 Status: first implementation milestone, 2026-10-27. Local changes; not deployed.
 
 ## Implementation milestone

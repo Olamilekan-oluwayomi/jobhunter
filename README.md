@@ -78,6 +78,11 @@ Set notification and matching options via the compose `environment` block or a
 
 ## Configuration
 
+The workspace now requires sign-in. Read the
+[account and discovery upgrade guide](docs/ACCOUNT-DISCOVERY-UPGRADE.md) before
+upgrading an existing database. It covers explicit transfer of legacy saved
+jobs/applications, administrator setup, sessions, discovery and notification retries.
+
 All behaviour is environment-driven. See
 [`backend/.env.example`](backend/.env.example) for the full reference:
 
@@ -85,6 +90,18 @@ All behaviour is environment-driven. See
   `MATCH_KEYWORDS`, `MATCH_SOURCES`, `MATCH_REMOTE_ONLY`, `MATCH_MIN_SALARY`.
 - **Channels** define a `DISCORD_WEBHOOK_URL` and/or Telegram
   `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`.
+
+Notification keywords use phrase boundaries: `Go` does not match `Django`,
+and `C`, `C++`, and `C#` are distinguished. Phrase separators such as `Next.js`,
+`next-js`, and `next js` are interchangeable.
+
+`MATCH_MIN_SALARY` compares the lower bound of supported USD salary expressions.
+For example, `$100k-$150k` has a $100,000 annual lower bound and `$5,000 per month`
+has a $60,000 annual lower bound. Hourly estimates assume 40 hours per week and
+52 weeks per year. Bare `$` is assumed to mean USD; an omitted pay period means
+annual pay. Foreign or unspecified currencies and ambiguous expressions (such
+as base pay plus a bonus) do not pass an enabled salary threshold. No exchange
+rates are used, and the original salary text remains unchanged.
 - **Scheduler** `SCHEDULE_ENABLED`, `SCHEDULE_INTERVAL_MINUTES`,
   `SCHEDULE_RUN_ON_STARTUP`.
 - **HTTP hardening** `CORS_ORIGINS`, `TRUSTED_HOSTS`,

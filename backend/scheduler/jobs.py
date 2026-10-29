@@ -10,13 +10,11 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-import sqlalchemy as _sa
-
 from config import get_settings
 from database import SessionLocal
-from database.models import Job
-from database.repository import create_scrape_run, save_jobs_bulk
-from notifications.service import notify_new_jobs
+from database.repository import create_scrape_run, insert_new_jobs
+from notifications.outbox import drain, enqueue
+from scheduler.lock import scrape_lock
 from scrapers.manager import ScraperManager
 from utils.logger import get_logger
 
@@ -39,6 +37,11 @@ class RunReport:
 
 
 def run_automation(triggered_by: str = "scheduler") -> RunReport:
+    with scrape_lock():
+        return _run_automation(triggered_by)
+
+
+def _run_automation(triggered_by: str) -> RunReport:
     """Fetch jobs from every scraper, persist only the new ones, log
     per-source statistics, then notify about matched jobs."""
     started_at = datetime.now(timezone.utc)
@@ -57,24 +60,16 @@ def run_automation(triggered_by: str = "scheduler") -> RunReport:
             source = job.get("source") or "unknown"
             by_source_jobs.setdefault(source, []).append(job)
 
-        # Bulk-insert per source in a single transaction each; speed ~100x
-        # faster than one INSERT+COMMIT per job for large fetches. Determine
-        # which URLs already exist up front so we can attribute notifications
-        # to genuinely new rows.
+        # Insert exact conflict winners and queue notifications in the same transaction.
         for source, jobs in by_source_jobs.items():
-            urls = {job["url"] for job in jobs}
-            existing = set(db.scalars(_sa.select(Job.url).where(Job.url.in_(urls))).all())
-            fresh = [job for job in jobs if job["url"] not in existing]
-
-            inserted = save_jobs_bulk(db, fresh)
+            inserted_jobs = insert_new_jobs(db, jobs)
+            enqueue(db, inserted_jobs)
+            db.commit()
+            inserted = len(inserted_jobs)
             exists = len(jobs) - inserted
-            by_source[source] = {
-                "fetched": len(jobs),
-                "new": inserted,
-                "exists": exists,
-            }
+            by_source[source] = {"fetched": len(jobs), "new": inserted, "exists": exists}
             already += exists
-            new_jobs.extend(fresh[:inserted])
+            new_jobs.extend(inserted_jobs)
 
         for source, result in results.items():
             entry = by_source.setdefault(source, {"fetched": result.parsed, "new": 0, "exists": 0})
@@ -90,12 +85,12 @@ def run_automation(triggered_by: str = "scheduler") -> RunReport:
         }
         succeeded_sources = sum(1 for result in results.values() if result.status == "OK")
 
-        notify = notify_new_jobs(new_jobs)
         settings = get_settings()
+        delivered = drain(db, settings)
         notified = {
-            "matched": notify.matched,
-            "discord": notify.discord_sent,
-            "telegram": notify.telegram_sent,
+            "discord": delivered["discord"],
+            "telegram": delivered["telegram"],
+            "failed": delivered["failed"],
             "channels_enabled": settings.any_channel_enabled,
         }
 

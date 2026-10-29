@@ -1,12 +1,14 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from api.auth import admin_user
 from api.dependencies import get_db
 from api.schemas import ScrapeResult
 from api.services import run_scrape
 from scheduler.jobs import list_recent_runs
+from scheduler.lock import ScrapeBusyError
 
-router = APIRouter(tags=["scraping"])
+router = APIRouter(tags=["scraping"], dependencies=[Depends(admin_user)])
 
 
 @router.post(
@@ -19,7 +21,10 @@ router = APIRouter(tags=["scraping"])
     ),
 )
 def scrape(db: Session = Depends(get_db)):
-    return run_scrape(db)
+    try:
+        return run_scrape(db)
+    except ScrapeBusyError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @router.get(
@@ -31,7 +36,7 @@ def scrape(db: Session = Depends(get_db)):
     ),
 )
 def scrape_runs(
-    limit: int = 10,
+    limit: int = Query(10, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
     return list_recent_runs(limit=limit)

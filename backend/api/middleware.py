@@ -66,6 +66,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         for header, value in self.HEADERS.items():
             response.headers.setdefault(header, value)
+        response.headers.setdefault("Cache-Control", "no-store")
         return response
 
 

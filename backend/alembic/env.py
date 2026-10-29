@@ -19,7 +19,8 @@ if str(BACKEND_ROOT) not in sys.path:
 from database.connection import DATABASE_URL
 from database.models import Base
 
-config.set_main_option("sqlalchemy.url", DATABASE_URL)
+# ConfigParser treats percent-encoded URL components as interpolation syntax.
+config.set_main_option("sqlalchemy.url", DATABASE_URL.replace("%", "%%"))
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.

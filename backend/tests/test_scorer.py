@@ -5,6 +5,8 @@ Pure functions: no database or network involved.
 
 from __future__ import annotations
 
+import pytest
+
 from matching.scorer import (
     PREFERENCE_WEIGHT,
     ROLE_WEIGHT,
@@ -136,3 +138,23 @@ def test_empty_profile_scores_zero():
     score = score_job(_job(title="Frontend Engineer", description=ALL_SKILLS_TEXT), JobProfile())
     assert score.score == 0
     assert score.missing_skills == ()
+
+
+@pytest.mark.parametrize(
+    ("skill", "text", "matches"),
+    [
+        ("C++", "C developer", False),
+        ("C#", "C developer", False),
+        ("C", "C++ developer", False),
+        ("C", "C# developer", False),
+        ("C++", "Modern C++ development", True),
+        ("C#", "Experience with C#.", True),
+        ("C++", "C++17 development", False),
+        ("C++", "Objective-C++ developer", True),
+        ("React", "reactor design", False),
+        ("Next.js", "next-js development", True),
+    ],
+)
+def test_skill_punctuation_and_boundaries(skill, text, matches):
+    score = score_job(_job(title="Developer", description=text), JobProfile(skills=(skill,)))
+    assert (skill in score.matched_skills) is matches
